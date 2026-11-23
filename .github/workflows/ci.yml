@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+      - run: pip install -r requirements-dev.txt
+      - run: flake8 app tests --max-line-length 120
+      - run: python -m pytest -q
+
+  docker:
+    needs: test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Start stack
+        run: |
+          cp .env.example .env
+          docker compose up -d --build
+      - name: Smoke test through Nginx
+        run: ./scripts/smoke_test.sh http://localhost:8080
+      - name: Data persists after container restart
+        run: |
+          docker compose restart web
+          sleep 5
+          ./scripts/smoke_test.sh http://localhost:8080 >/dev/null
+          curl -fsS http://localhost:8080/api/tasks | grep -q 'smoke test task'
+          echo "persistence OK"
+      - name: Logs on failure
+        if: failure()
+        run: docker compose logs
+      - run: docker compose down -v
